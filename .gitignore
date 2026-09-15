@@ -3,3 +3,8 @@ build/
 *.bin
 *.elf
 seng21213-os.img
+*.backup
+*.stage1-backup
+*.before-irq-stack-fix
+*.stage2-test-backup
+*.before-thread-scheduler-fix

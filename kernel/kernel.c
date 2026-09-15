@@ -24,6 +24,9 @@
 #include "vga.h"
 #include "keyboard.h"
 #include "process.h"
+#include "thread.h"
+#include "mutex.h"
+#include "semaphore.h"
 #include "scheduler.h"
 #include "pit.h"
 #include "idt.h"
@@ -35,27 +38,63 @@ extern void switch_context(uint32_t *old_esp, uint32_t new_esp);
 
 static uint32_t kernel_esp = 0;
 
-void irq0_handler_c(void)
+/*
+ * IRQ0 scheduler entry.
+ *
+ * The assembly IRQ handler passes the address of the saved
+ * register frame. This function returns the ESP of the
+ * context that should continue after the interrupt.
+ */
+uint32_t irq0_handler_c(uint32_t current_esp)
 {
-    pcb_t *current;
-    pcb_t *next;
+    thread_t *current_thread;
+    thread_t *next_thread;
 
-    current = process_get_current();
-    next = scheduler_next();
+    /*
+     * Stage 2 - Thread scheduling.
+     */
+    if (thread_get_count() > 0) {
+        current_thread = thread_get_current();
 
-    if (current == 0) {
-        /* Timer interrupted the kernel shell. */
-        if (next != 0) {
-            switch_context(&kernel_esp, next->esp);
-        }
-    } else {
-        /* Timer interrupted a running process. */
-        if (next != 0) {
-            switch_context(&current->esp, next->esp);
+        /*
+         * Timer interrupted the kernel shell.
+         * Remember the shell's interrupt context.
+         */
+        if (current_thread == 0) {
+            kernel_esp = current_esp;
         } else {
-            switch_context(&current->esp, kernel_esp);
+            /*
+             * Save the interrupted thread's context.
+             */
+            current_thread->esp = current_esp;
         }
+
+        next_thread = scheduler_next_thread();
+
+        if (next_thread != 0) {
+            return next_thread->esp;
+        }
+
+        /*
+         * No READY thread.
+         * Return to the kernel shell if its context exists.
+         */
+        if (kernel_esp != 0) {
+            thread_set_current(0);
+            return kernel_esp;
+        }
+
+        return current_esp;
     }
+
+    /*
+     * Stage 1 fallback.
+     *
+     * When Stage 2 threads do not exist, keep the current
+     * interrupt context. Stage 1 process switching will be
+     * re-integrated after the thread context switch is stable.
+     */
+    return current_esp;
 }
 
 
@@ -99,6 +138,179 @@ static void test_process_2(void)
         for (i = 0; i < 1000; i++) {
             __asm__ __volatile__("nop");
         }
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Stage 2: Mutex / Race Condition Test
+ * --------------------------------------------------------------------------*/
+
+static volatile uint32_t myglobal = 0;
+static mutex_t test_mutex;
+
+/* Stage 2 - Bounded Buffer Producer/Consumer */
+#define BUFFER_SIZE 8
+
+static int buffer[BUFFER_SIZE];
+static uint32_t buffer_in = 0;
+static uint32_t buffer_out = 0;
+
+static semaphore_t empty_slots;
+static semaphore_t full_slots;
+static semaphore_t buffer_mutex;
+
+/* ---------------------------------------------------------------------------
+ * Stage 2: Test threads
+ * --------------------------------------------------------------------------*/
+
+
+static void test_thread_1(void *arg)
+{
+    uint32_t i;
+
+    (void)arg;
+
+    vga_puts("\n[THREAD 1] Mutex test started\n");
+
+    for (i = 0; i < 10; i++) {
+        mutex_lock(&test_mutex);
+
+        myglobal++;
+
+        vga_puts("[THREAD 1] myglobal = ");
+        vga_printf("%u", myglobal);
+        vga_puts("\n");
+
+        mutex_unlock(&test_mutex);
+
+        for (uint32_t delay = 0; delay < 1000; delay++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+
+    vga_puts("[THREAD 1] Finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+static void test_thread_2(void *arg)
+{
+    uint32_t i;
+
+    (void)arg;
+
+    vga_puts("\n[THREAD 2] Mutex test started\n");
+
+    for (i = 0; i < 10; i++) {
+        mutex_lock(&test_mutex);
+
+        myglobal++;
+
+        vga_puts("[THREAD 2] myglobal = ");
+        vga_printf("%u", myglobal);
+        vga_puts("\n");
+
+        mutex_unlock(&test_mutex);
+
+        for (uint32_t delay = 0; delay < 1000; delay++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+
+    vga_puts("[THREAD 2] Finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Stage 2: Bounded Buffer Producer
+ * --------------------------------------------------------------------------*/
+
+static void producer_thread(void *arg)
+{
+    int item;
+    uint32_t i;
+
+    (void)arg;
+
+    vga_puts("\n[PRODUCER] Started\n");
+
+    for (item = 1; item <= 20; item++) {
+        /* Wait until the buffer has an empty slot. */
+        sem_wait(&empty_slots);
+
+        /* Only one thread may modify the buffer at a time. */
+        sem_wait(&buffer_mutex);
+
+        buffer[buffer_in] = item;
+        buffer_in = (buffer_in + 1) % BUFFER_SIZE;
+
+        vga_puts("[PRODUCER] Produced item ");
+        vga_printf("%u", (uint32_t)item);
+        vga_puts("\n");
+
+        sem_signal(&buffer_mutex);
+
+        /* Tell the consumer that one item is available. */
+        sem_signal(&full_slots);
+
+        for (i = 0; i < 2000; i++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+
+    vga_puts("[PRODUCER] Finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Stage 2: Bounded Buffer Consumer
+ * --------------------------------------------------------------------------*/
+
+static void consumer_thread(void *arg)
+{
+    int item;
+    uint32_t i;
+
+    (void)arg;
+
+    vga_puts("\n[CONSUMER] Started\n");
+
+    for (i = 0; i < 20; i++) {
+        /* Wait until the buffer contains an item. */
+        sem_wait(&full_slots);
+
+        /* Only one thread may modify the buffer at a time. */
+        sem_wait(&buffer_mutex);
+
+        item = buffer[buffer_out];
+        buffer_out = (buffer_out + 1) % BUFFER_SIZE;
+
+        vga_puts("[CONSUMER] Consumed item ");
+        vga_printf("%u", (uint32_t)item);
+        vga_puts("\n");
+
+        sem_signal(&buffer_mutex);
+
+        /* One more empty slot is now available. */
+        sem_signal(&empty_slots);
+
+        for (uint32_t delay = 0; delay < 3000; delay++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+
+    vga_puts("[CONSUMER] Finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
     }
 }
 
@@ -334,7 +546,16 @@ void kernel_main(void) {
 
     /* Stage 1 - Process Management (Lecture 09) */
     process_init();
+    thread_init();
     scheduler_init();
+
+    /* Stage 2 - Initialize mutex */
+    mutex_init(&test_mutex);
+
+    /* Stage 2 - Initialize producer-consumer semaphores */
+    sem_init(&empty_slots, BUFFER_SIZE);
+    sem_init(&full_slots, 0);
+    sem_init(&buffer_mutex, 1);
 
     /* Stage 1 - Interrupts and timer */
     idt_init();
@@ -344,10 +565,18 @@ void kernel_main(void) {
     process_create(test_process_1);
     process_create(test_process_2);
 
-    /* Enable hardware interrupts */
-    __asm__ __volatile__("sti");
+    /* Stage 2 - Mutex test threads temporarily disabled */
+    thread_create(test_thread_1, 0);
+    thread_create(test_thread_2, 0);
+
+    /* Stage 2 - Create producer and consumer threads */
+    thread_create(producer_thread, 0);
+    thread_create(consumer_thread, 0);
 
     print_splash();
+
+    /* Enable hardware interrupts after the splash screen */
+    __asm__ __volatile__("sti");
     shell_run();
 
     /* Should never reach here */
