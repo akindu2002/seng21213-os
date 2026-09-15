@@ -1,4 +1,4 @@
-# SENG21213-OS — Stage 0: Kernel Foundations
+# SENG21213-OS — Stage 2: Threads & Synchronisation
 
 > **Course**: SENG 21213 – Computer Architecture & Operating Systems  
 > **Year**: 2nd Year, Software Engineering  
@@ -8,7 +8,7 @@
 
 ## What Is This?
 
-This is **Stage 0** of your semester-long OS assignment. Over 5 lecture milestones
+This is **Stage 2** of your semester-long OS assignment. Over 5 lecture milestones
 (Lectures 8–12), your team will transform this minimal kernel into a functioning
 operating system with process management, threading, memory management, and a
 file system.
@@ -34,13 +34,13 @@ seng21213-os/
 
 ## Milestone Schedule
 
-| Lecture | Milestone | Files to Add |
-|---------|-----------|-------------|
-| L08 | ✅ Stage 0 – Boot + VGA + Shell | *Given to you* |
-| L09 | Process Management | `kernel/process.c`, `kernel/scheduler.c` |
-| L10 | Threads & Synchronisation | `kernel/thread.c`, `kernel/mutex.c` |
-| L11 | Memory Management | `kernel/pmm.c`, `kernel/vmm.c` |
-| L12 | File System | `kernel/fs.c`, `kernel/ramdisk.c` |
+| Stage | Milestone | Status |
+|-------|-----------|--------|
+| Stage 0 | Boot + VGA + Shell | ✅ Complete |
+| Stage 1 | Process Management + Round-Robin Scheduler | ✅ Complete |
+| Stage 2 | Threads + Mutex + Semaphore | ✅ Complete |
+| Stage 3 | Memory Management | ⏳ Next |
+| Stage 4 | File System | ⏳ Upcoming |
 
 ---
 
@@ -116,9 +116,52 @@ Your code from here...
 
 ---
 
-## Building Lecture 9: Process Management
+## Stage 2 — Threads & Synchronisation
 
-When you reach Lecture 9, you'll add process support. Here's the interface to implement:
+Stage 2 builds on the process management and scheduler implemented in Stage 1.
+
+### Implemented Features
+
+- Kernel thread creation using `thread_create(fn, arg)`
+- Thread states:
+  - `THREAD_READY`
+  - `THREAD_RUNNING`
+  - `THREAD_BLOCKED`
+  - `THREAD_TERMINATED`
+- Round-robin thread scheduling
+- Blocking mutex
+- Counting semaphore
+- Race-condition demonstration
+- Race-condition demonstration with mutex protection
+- Producer-consumer bounded-buffer demonstration
+
+### Synchronisation Tests
+
+The kernel includes demonstrations showing the difference between an unsynchronised
+shared counter and a mutex-protected shared counter.
+
+Example output:
+
+```text
+[NO MUTEX] Expected: 40, Actual: 20
+[WITH MUTEX] Expected: 40, Actual: 40
+
+The first result demonstrates a race condition, while the second demonstrates
+correct synchronisation using a mutex.
+
+### Stage 2 Files
+
+```text
+kernel/
+├── thread.c / thread.h
+├── mutex.c / mutex.h
+├── semaphore.c / semaphore.h
+├── process.c / process.h
+├── scheduler.c / scheduler.h
+├── pit.c / pit.h
+└── idt.c / idt.h
+
+Tag: v0.3-stage2
 
 ```c
 /* kernel/process.h  — you write this! */
