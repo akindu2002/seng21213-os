@@ -148,6 +148,16 @@ static void test_process_2(void)
 static volatile uint32_t myglobal = 0;
 static mutex_t test_mutex;
 
+/* Stage 2 - Race condition demonstration */
+static volatile uint32_t race_global = 0;
+static volatile uint32_t race1_done = 0;
+static volatile uint32_t race2_done = 0;
+static volatile uint32_t mutex_race_global = 0;
+static volatile uint32_t mutex_race1_done = 0;
+static volatile uint32_t mutex_race2_done = 0;
+static volatile uint32_t race_results_printed = 0;
+static mutex_t race_mutex;
+
 /* Stage 2 - Bounded Buffer Producer/Consumer */
 #define BUFFER_SIZE 8
 
@@ -220,6 +230,138 @@ static void test_thread_2(void *arg)
     }
 
     vga_puts("[THREAD 2] Finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Stage 2: Race condition demonstration
+ * --------------------------------------------------------------------------*/
+
+static void race_thread_1(void *arg)
+{
+    uint32_t i;
+    uint32_t local_value;
+
+    (void)arg;
+
+    vga_puts("\n[RACE NO MUTEX] Thread 1 started\n");
+
+    for (i = 0; i < 20; i++) {
+        local_value = race_global;
+
+        /*
+         * Force a scheduling point between read and write.
+         * This makes the lost-update race visible.
+         */
+        __asm__ __volatile__("hlt");
+
+        race_global = local_value + 1;
+    }
+
+    race1_done = 1;
+    vga_puts("[RACE NO MUTEX] Thread 1 finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+static void race_thread_2(void *arg)
+{
+    uint32_t i;
+    uint32_t local_value;
+
+    (void)arg;
+
+    vga_puts("[RACE NO MUTEX] Thread 2 started\n");
+
+    for (i = 0; i < 20; i++) {
+        local_value = race_global;
+
+        /*
+         * Force a scheduling point between read and write.
+         */
+        __asm__ __volatile__("hlt");
+
+        race_global = local_value + 1;
+    }
+
+    race2_done = 1;
+    vga_puts("[RACE NO MUTEX] Thread 2 finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+static void mutex_race_thread_1(void *arg)
+{
+    uint32_t i;
+
+    (void)arg;
+
+    while (!race1_done || !race2_done) {
+        __asm__ __volatile__("hlt");
+    }
+
+    vga_puts("\n[RACE WITH MUTEX] Thread 1 started\n");
+
+    for (i = 0; i < 20; i++) {
+        mutex_lock(&race_mutex);
+        mutex_race_global++;
+        mutex_unlock(&race_mutex);
+    }
+
+    mutex_race1_done = 1;
+    vga_puts("[RACE WITH MUTEX] Thread 1 finished\n");
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
+}
+
+static void mutex_race_thread_2(void *arg)
+{
+    uint32_t i;
+
+    (void)arg;
+
+    while (!race1_done || !race2_done) {
+        __asm__ __volatile__("hlt");
+    }
+
+    vga_puts("[RACE WITH MUTEX] Thread 2 started\n");
+
+    for (i = 0; i < 20; i++) {
+        mutex_lock(&race_mutex);
+        mutex_race_global++;
+        mutex_unlock(&race_mutex);
+    }
+
+    mutex_race2_done = 1;
+    vga_puts("[RACE WITH MUTEX] Thread 2 finished\n");
+
+    if (mutex_race1_done && mutex_race2_done &&
+        !race_results_printed) {
+        race_results_printed = 1;
+
+        vga_puts("\n========================================\n");
+        vga_puts("       STAGE 2 RACE CONDITION TEST\n");
+        vga_puts("========================================\n");
+
+        vga_puts("[NO MUTEX]   Expected: 40, Actual: ");
+        vga_printf("%u", race_global);
+        vga_puts("\n");
+
+        vga_puts("[WITH MUTEX] Expected: 40, Actual: ");
+        vga_printf("%u", mutex_race_global);
+        vga_puts("\n");
+
+        vga_puts("========================================\n");
+    }
 
     for (;;) {
         __asm__ __volatile__("hlt");
@@ -551,6 +693,7 @@ void kernel_main(void) {
 
     /* Stage 2 - Initialize mutex */
     mutex_init(&test_mutex);
+    mutex_init(&race_mutex);
 
     /* Stage 2 - Initialize producer-consumer semaphores */
     sem_init(&empty_slots, BUFFER_SIZE);
@@ -568,6 +711,12 @@ void kernel_main(void) {
     /* Stage 2 - Mutex test threads temporarily disabled */
     thread_create(test_thread_1, 0);
     thread_create(test_thread_2, 0);
+
+    /* Stage 2 - Race condition demonstration */
+    thread_create(race_thread_1, 0);
+    thread_create(race_thread_2, 0);
+    thread_create(mutex_race_thread_1, 0);
+    thread_create(mutex_race_thread_2, 0);
 
     /* Stage 2 - Create producer and consumer threads */
     thread_create(producer_thread, 0);
