@@ -23,7 +23,41 @@
 
 #include "vga.h"
 #include "keyboard.h"
+#include "process.h"
+#include "scheduler.h"
+#include "pit.h"
+#include "idt.h"
 #include "../include/types.h"
+
+
+/* Stage 1 - Context switching */
+extern void switch_context(uint32_t *old_esp, uint32_t new_esp);
+
+static uint32_t kernel_esp = 0;
+
+void irq0_handler_c(void)
+{
+    pcb_t *current;
+    pcb_t *next;
+
+    current = process_get_current();
+    next = scheduler_next();
+
+    if (current == 0) {
+        /* Timer interrupted the kernel shell. */
+        if (next != 0) {
+            switch_context(&kernel_esp, next->esp);
+        }
+    } else {
+        /* Timer interrupted a running process. */
+        if (next != 0) {
+            switch_context(&current->esp, next->esp);
+        } else {
+            switch_context(&current->esp, kernel_esp);
+        }
+    }
+}
+
 
 /* ---------------------------------------------------------------------------
  * Forward declarations of shell commands
@@ -33,6 +67,40 @@ static void cmd_clear(void);
 static void cmd_about(void);
 static void cmd_echo(const char *args);
 static void cmd_mem(void);
+static void cmd_ps(void);
+
+/* ---------------------------------------------------------------------------
+ * Stage 1: Test processes
+ * --------------------------------------------------------------------------*/
+static void test_process_1(void)
+{
+    volatile uint32_t i;
+    uint32_t counter = 0;
+
+    for (;;) {
+        counter++;
+
+
+        for (i = 0; i < 1000; i++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+}
+
+static void test_process_2(void)
+{
+    volatile uint32_t i;
+    uint32_t counter = 0;
+
+    for (;;) {
+        counter++;
+
+
+        for (i = 0; i < 1000; i++) {
+            __asm__ __volatile__("nop");
+        }
+    }
+}
 
 /* ---------------------------------------------------------------------------
  * Utility: minimal string helpers (no libc in a freestanding kernel!)
@@ -160,6 +228,51 @@ static void cmd_mem(void) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Stage 1: Process list
+ * --------------------------------------------------------------------------*/
+static void cmd_ps(void)
+{
+    pcb_t *table;
+    uint32_t count;
+    uint32_t i;
+
+    table = process_get_table();
+    count = process_get_count();
+
+    vga_puts("PID   STATE\n");
+    vga_puts("----------------\n");
+
+    for (i = 0; i < count; i++) {
+        vga_printf("%u   ", table[i].pid);
+
+        switch (table[i].state) {
+            case READY:
+                vga_puts("READY");
+                break;
+
+            case RUNNING:
+                vga_puts("RUNNING");
+                break;
+
+            case BLOCKED:
+                vga_puts("BLOCKED");
+                break;
+
+            case TERMINATED:
+                vga_puts("TERMINATED");
+                break;
+
+            default:
+                vga_puts("UNKNOWN");
+                break;
+        }
+
+        vga_puts("\n");
+    }
+}
+
+
+/* ---------------------------------------------------------------------------
  * Shell process
  * --------------------------------------------------------------------------*/
 static char  shell_buf[256];
@@ -188,9 +301,14 @@ static void shell_run(void) {
             continue;
         }
 
+        /* Stage 1: Process management */
+        if (k_strcmp(cmd, "ps") == 0) {
+            cmd_ps();
+            continue;
+        }
+
         /* Milestone stubs */
-        if (k_strcmp(cmd, "ps")      == 0 ||
-            k_strcmp(cmd, "kill")    == 0 ||
+        if (k_strcmp(cmd, "kill")    == 0 ||
             k_strcmp(cmd, "threads") == 0 ||
             k_strcmp(cmd, "free")    == 0 ||
             k_strcmp(cmd, "ls")      == 0 ||
@@ -213,6 +331,22 @@ static void shell_run(void) {
 void kernel_main(void) {
     vga_init();
     kb_init();
+
+    /* Stage 1 - Process Management (Lecture 09) */
+    process_init();
+    scheduler_init();
+
+    /* Stage 1 - Interrupts and timer */
+    idt_init();
+    pit_init(100);
+
+    /* Stage 1 - Create two test processes */
+    process_create(test_process_1);
+    process_create(test_process_2);
+
+    /* Enable hardware interrupts */
+    __asm__ __volatile__("sti");
+
     print_splash();
     shell_run();
 
