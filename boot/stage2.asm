@@ -92,7 +92,7 @@ init_pm32:
     mov es, ax
     mov ss, ax
 
-    mov esp, 0x90000
+    mov esp, 0x180000
 
     call 0x10000
 

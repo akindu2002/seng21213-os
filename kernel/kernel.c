@@ -31,6 +31,7 @@
 #include "pit.h"
 #include "idt.h"
 #include "pmm.h"
+#include "fs.h"
 #include "../include/types.h"
 
 
@@ -694,6 +695,148 @@ static void cmd_ps(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Stage 4: File system shell commands
+ * Lecture L12
+ * --------------------------------------------------------------------------*/
+
+static void cmd_ls(void)
+{
+    fs_list();
+}
+
+static void cmd_touch(const char *name)
+{
+    if (name == (const char *)0 || k_strlen(name) == 0) {
+        vga_puts("  Usage: touch <filename>\n");
+        return;
+    }
+
+    if (fs_create(name) == 0) {
+        vga_puts("  File created: ");
+        vga_puts(name);
+        vga_puts("\n");
+    } else {
+        vga_puts_color("  Error: could not create file.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+static void cmd_cat(const char *name)
+{
+    int fd;
+    int bytes;
+    char buffer[4097];
+
+    if (name == (const char *)0 || k_strlen(name) == 0) {
+        vga_puts("  Usage: cat <filename>\n");
+        return;
+    }
+
+    fd = fs_open(name);
+
+    if (fd < 0) {
+        vga_puts_color("  Error: file not found.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    bytes = fs_read(fd, buffer, 4096);
+
+    if (bytes < 0) {
+        vga_puts_color("  Error: could not read file.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_close(fd);
+        return;
+    }
+
+    buffer[bytes] = '\0';
+    vga_puts(buffer);
+    vga_puts("\n");
+
+    fs_close(fd);
+}
+
+static void cmd_rm(const char *name)
+{
+    if (name == (const char *)0 || k_strlen(name) == 0) {
+        vga_puts("  Usage: rm <filename>\n");
+        return;
+    }
+
+    if (fs_unlink(name) == 0) {
+        vga_puts("  File removed: ");
+        vga_puts(name);
+        vga_puts("\n");
+    } else {
+        vga_puts_color("  Error: file not found.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
+static void cmd_write(const char *args)
+{
+    char filename[RAMDISK_NAME_LEN];
+    const char *text;
+    int fd;
+    int written;
+    uint32_t i;
+
+    if (args == (const char *)0 || k_strlen(args) == 0) {
+        vga_puts("  Usage: write <filename> <text>\n");
+        return;
+    }
+
+    /*
+     * Read the filename.
+     */
+    i = 0;
+
+    while (args[i] != '\0' &&
+           args[i] != ' ' &&
+           i < RAMDISK_NAME_LEN - 1) {
+        filename[i] = args[i];
+        i++;
+    }
+
+    filename[i] = '\0';
+
+    /*
+     * Text starts after the filename.
+     */
+    text = args + i;
+
+    while (*text == ' ') {
+        text++;
+    }
+
+    if (filename[0] == '\0' || text[0] == '\0') {
+        vga_puts("  Usage: write <filename> <text>\n");
+        return;
+    }
+
+    fd = fs_open(filename);
+
+    if (fd < 0) {
+        vga_puts_color("  Error: file not found.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    written = fs_append(fd, text, k_strlen(text));
+
+    fs_close(fd);
+
+    if (written < 0) {
+        vga_puts_color("  Error: could not write file.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    vga_puts("  Written ");
+    vga_puts(filename);
+    vga_puts("\n");
+}
 
 /* ---------------------------------------------------------------------------
  * Shell process
@@ -732,22 +875,46 @@ static void shell_run(void) {
         }
 
         /* Stage 1: Process management */
-        if (k_strcmp(cmd, "ps") == 0) {
-            cmd_ps();
-            continue;
-        }
+if (k_strcmp(cmd, "ps") == 0) {
+    cmd_ps();
+    continue;
+}
 
-        /* Milestone stubs */
-        if (k_strcmp(cmd, "kill")    == 0 ||
-            k_strcmp(cmd, "threads") == 0 ||
-            k_strcmp(cmd, "free")    == 0 ||
-            k_strcmp(cmd, "ls")      == 0 ||
-            k_strcmp(cmd, "cat")     == 0) {
-            vga_puts_color("  [TODO] This command is not yet implemented.\n",
-                           VGA_YELLOW, VGA_BLACK);
-            vga_puts("  Implement it as part of your lecture assignment.\n");
-            continue;
-        }
+/* Stage 4: File system commands */
+if (k_strcmp(cmd, "ls") == 0) {
+    cmd_ls();
+    continue;
+}
+
+if (k_strncmp(cmd, "touch ", 6) == 0) {
+    cmd_touch(k_ltrim(cmd + 6));
+    continue;
+}
+
+if (k_strncmp(cmd, "cat ", 4) == 0) {
+    cmd_cat(k_ltrim(cmd + 4));
+    continue;
+}
+
+if (k_strncmp(cmd, "write ", 6) == 0) {
+    cmd_write(k_ltrim(cmd + 6));
+    continue;
+}
+
+if (k_strncmp(cmd, "rm ", 3) == 0) {
+    cmd_rm(k_ltrim(cmd + 3));
+    continue;
+}
+
+/* Milestone stubs */
+if (k_strcmp(cmd, "kill")    == 0 ||
+    k_strcmp(cmd, "threads") == 0 ||
+    k_strcmp(cmd, "free")    == 0) {
+    vga_puts_color("  [TODO] This command is not yet implemented.\n",
+                   VGA_YELLOW, VGA_BLACK);
+    vga_puts("  Implement it as part of your lecture assignment.\n");
+    continue;
+}
 
         vga_puts_color("  Unknown command: ", VGA_LIGHT_RED, VGA_BLACK);
         vga_puts(cmd);
@@ -764,6 +931,7 @@ void kernel_main(void) {
 
     /* Stage 3 - Physical Memory Manager */
     pmm_init();
+    fs_init();
 
     /* Stage 1 - Process Management (Lecture 09) */
     process_init();

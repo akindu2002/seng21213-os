@@ -39,9 +39,8 @@ seng21213-os/
 | Stage 0 | Boot + VGA + Shell | ✅ Complete |
 | Stage 1 | Process Management + Round-Robin Scheduler | ✅ Complete |
 | Stage 2 | Threads + Mutex + Semaphore | ✅ Complete |
-| Stage 3 | Memory Management | ⏳ Next |
-| Stage 4 | File System | ⏳ Upcoming |
-
+| Stage 3 | Memory Management | ✅ Complete |
+| Stage 4 | File System | ✅ Complete |
 ---
 
 ## Quick Start
