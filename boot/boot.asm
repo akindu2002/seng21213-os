@@ -35,21 +35,23 @@ start:
 ; This gives us 64 × 512 = 32 768 bytes for the kernel (Stage 0)
 ; ---------------------------------------------------------------------------
 load_kernel:
-    mov  bx, 0x1000        ; ES:BX = 0x10000 (kernel load address)
+    ; Load Stage 2 bootloader from sector 2 to physical 0x8000
+    mov  bx, 0x0800
     mov  es, bx
     xor  bx, bx
 
-    mov  ah, 0x02          ; BIOS read sectors
-    mov  al, 64            ; Number of sectors to read
-    mov  ch, 0             ; Cylinder 0
-    mov  cl, 2             ; Start from sector 2 (sector 1 is MBR)
-    mov  dh, 0             ; Head 0
-    mov  dl, [boot_drive]  ; Drive number
+    mov  ah, 0x02
+    mov  al, 1
+    mov  ch, 0
+    mov  cl, 2
+    mov  dh, 0
+    mov  dl, [boot_drive]
     int  0x13
-    jc   disk_error        ; Carry flag set = error
+    jc   disk_error
 
-    mov  si, msg_ok
-    call print_rm
+    ; Jump to Stage 2 bootloader
+    mov  dl, [boot_drive]
+    jmp  0x0000:0x8000
 
 ; ---------------------------------------------------------------------------
 ; Enter Protected Mode

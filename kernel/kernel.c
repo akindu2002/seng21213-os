@@ -30,6 +30,7 @@
 #include "scheduler.h"
 #include "pit.h"
 #include "idt.h"
+#include "pmm.h"
 #include "../include/types.h"
 
 
@@ -105,7 +106,8 @@ static void cmd_help(void);
 static void cmd_clear(void);
 static void cmd_about(void);
 static void cmd_echo(const char *args);
-static void cmd_mem(void);
+static void cmd_meminfo(void);
+static void cmd_memtest(void);
 static void cmd_ps(void);
 
 /* ---------------------------------------------------------------------------
@@ -199,10 +201,7 @@ static void test_thread_1(void *arg)
     }
 
     vga_puts("[THREAD 1] Finished\n");
-
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 static void test_thread_2(void *arg)
@@ -230,10 +229,7 @@ static void test_thread_2(void *arg)
     }
 
     vga_puts("[THREAD 2] Finished\n");
-
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 /* ---------------------------------------------------------------------------
@@ -264,9 +260,7 @@ static void race_thread_1(void *arg)
     race1_done = 1;
     vga_puts("[RACE NO MUTEX] Thread 1 finished\n");
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 static void race_thread_2(void *arg)
@@ -292,9 +286,7 @@ static void race_thread_2(void *arg)
     race2_done = 1;
     vga_puts("[RACE NO MUTEX] Thread 2 finished\n");
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 static void mutex_race_thread_1(void *arg)
@@ -318,9 +310,7 @@ static void mutex_race_thread_1(void *arg)
     mutex_race1_done = 1;
     vga_puts("[RACE WITH MUTEX] Thread 1 finished\n");
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 static void mutex_race_thread_2(void *arg)
@@ -363,9 +353,7 @@ static void mutex_race_thread_2(void *arg)
         vga_puts("========================================\n");
     }
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 /* ---------------------------------------------------------------------------
@@ -407,9 +395,7 @@ static void producer_thread(void *arg)
 
     vga_puts("[PRODUCER] Finished\n");
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 /* ---------------------------------------------------------------------------
@@ -451,9 +437,7 @@ static void consumer_thread(void *arg)
 
     vga_puts("[CONSUMER] Finished\n");
 
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    return;
 }
 
 /* ---------------------------------------------------------------------------
@@ -568,19 +552,104 @@ static void cmd_echo(const char *args) {
     vga_puts("\n");
 }
 
-static void cmd_mem(void) {
-    /* Stage 0 stub – students implement the real PMM in Lecture 11 */
-    vga_puts_color("\n  Memory Map (stub – implement PMM in Lecture 11)\n",
+static void cmd_meminfo(void)
+{
+    uint32_t total_frames;
+    uint32_t used_frames;
+    uint32_t free_frames;
+
+    total_frames = pmm_get_total_frames();
+    used_frames = pmm_get_used_frames();
+    free_frames = pmm_get_free_frames();
+
+    vga_puts_color("\n  Physical Memory Information\n",
                    VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("  ─────────────────────────────────────────────\n");
-    vga_puts("  0x00000000 – 0x000FFFFF  :  First 1 MB (reserved/BIOS)\n");
-    vga_puts("  0x00100000 – 0x00EFFFFF  :  Extended memory (usable ~14 MB)\n");
-    vga_puts("  0x00F00000 – 0x00FFFFFF  :  BIOS / ROM area\n");
-    vga_puts("  0xB8000    – 0xBFFFF     :  VGA frame buffer\n");
-    vga_puts_color("\n  TODO: Use BIOS int 0x15, EAX=0xE820 to get real memory map\n\n",
-                   VGA_YELLOW, VGA_BLACK);
+    vga_puts("  --------------------------------\n");
+
+    vga_puts("  Total : ");
+    vga_printf("%u MB\n",
+               (total_frames * PMM_PAGE_SIZE) / (1024 * 1024));
+
+    vga_puts("  Used  : ");
+    vga_printf("%u MB\n",
+               (used_frames * PMM_PAGE_SIZE) / (1024 * 1024));
+
+    vga_puts("  Free  : ");
+    vga_printf("%u MB\n",
+               (free_frames * PMM_PAGE_SIZE) / (1024 * 1024));
+
+    vga_puts("\n");
 }
 
+static void cmd_memtest(void)
+{
+    uint32_t frames[100];
+    uint32_t before;
+    uint32_t after_alloc;
+    uint32_t after_free;
+    uint32_t i;
+    uint32_t j;
+    bool failed;
+
+    failed = false;
+
+    before = pmm_get_free_frames();
+
+    for (i = 0; i < 100; i++) {
+        frames[i] = pmm_alloc_frame();
+
+        if (frames[i] == 0) {
+            failed = true;
+            break;
+        }
+
+        if ((frames[i] % PMM_PAGE_SIZE) != 0) {
+            failed = true;
+            break;
+        }
+
+        for (j = 0; j < i; j++) {
+            if (frames[i] == frames[j]) {
+                failed = true;
+                break;
+            }
+        }
+
+        if (failed) {
+            break;
+        }
+    }
+
+    after_alloc = pmm_get_free_frames();
+
+    for (j = 0; j < i; j++) {
+        pmm_free_frame(frames[j]);
+    }
+
+    after_free = pmm_get_free_frames();
+
+    vga_puts("\n  PMM 100-Frame Test\n");
+    vga_puts("  -------------------------\n");
+
+    vga_puts("  Free before : ");
+    vga_printf("%u frames\n", before);
+
+    vga_puts("  Free after 100 alloc : ");
+    vga_printf("%u frames\n", after_alloc);
+
+    vga_puts("  Free after free : ");
+    vga_printf("%u frames\n", after_free);
+
+    if (!failed && i == 100 && after_free == before) {
+        vga_puts_color("  PASS: No memory leak detected.\n",
+                       VGA_LIGHT_GREEN, VGA_BLACK);
+    } else {
+        vga_puts_color("  FAIL: PMM test failed.\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    }
+
+    vga_puts("\n");
+}
 /* ---------------------------------------------------------------------------
  * Stage 1: Process list
  * --------------------------------------------------------------------------*/
@@ -648,7 +717,14 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "help")  == 0) { cmd_help();  continue; }
         if (k_strcmp(cmd, "clear") == 0) { cmd_clear(); continue; }
         if (k_strcmp(cmd, "about") == 0) { cmd_about(); continue; }
-        if (k_strcmp(cmd, "mem")   == 0) { cmd_mem();   continue; }
+        if (k_strcmp(cmd, "meminfo") == 0) {
+            cmd_meminfo();
+            continue;
+        }
+        if (k_strcmp(cmd, "memtest") == 0) {
+            cmd_memtest();
+            continue;
+        }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -686,6 +762,9 @@ void kernel_main(void) {
     vga_init();
     kb_init();
 
+    /* Stage 3 - Physical Memory Manager */
+    pmm_init();
+
     /* Stage 1 - Process Management (Lecture 09) */
     process_init();
     thread_init();
@@ -708,20 +787,15 @@ void kernel_main(void) {
     process_create(test_process_1);
     process_create(test_process_2);
 
-    /* Stage 2 - Mutex test threads temporarily disabled */
+    /* Stage 2 - Thread tests */
     thread_create(test_thread_1, 0);
     thread_create(test_thread_2, 0);
-
-    /* Stage 2 - Race condition demonstration */
     thread_create(race_thread_1, 0);
     thread_create(race_thread_2, 0);
     thread_create(mutex_race_thread_1, 0);
     thread_create(mutex_race_thread_2, 0);
-
-    /* Stage 2 - Create producer and consumer threads */
     thread_create(producer_thread, 0);
     thread_create(consumer_thread, 0);
-
     print_splash();
 
     /* Enable hardware interrupts after the splash screen */

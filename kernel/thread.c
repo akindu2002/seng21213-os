@@ -2,9 +2,9 @@
 
 static thread_t thread_table[MAX_THREADS];
 static uint32_t thread_count = 0;
+static thread_t *current_thread = 0;
 static uint32_t next_tid = 1;
 
-static thread_t *current_thread = 0;
 
 /*
  * Stage 2 - Thread entry wrapper.
@@ -31,15 +31,15 @@ static void thread_bootstrap(void)
          * Mark this thread as terminated.
          */
         thread->state = THREAD_TERMINATED;
-        current_thread = 0;
     }
 
     /*
-     * A terminated thread must not continue executing.
-     * The timer interrupt will eventually select another
-     * runnable context.
-     */
+    * The thread function has finished.
+    * Keep interrupts enabled and wait for the
+    * scheduler to switch back to the kernel.
+    */
     for (;;) {
+        __asm__ __volatile__("sti");
         __asm__ __volatile__("hlt");
     }
 }
@@ -49,8 +49,8 @@ void thread_init(void)
     uint32_t i;
 
     thread_count = 0;
-    next_tid = 1;
     current_thread = 0;
+    next_tid = 1;
 
     for (i = 0; i < MAX_THREADS; i++) {
         thread_table[i].tid = 0;
